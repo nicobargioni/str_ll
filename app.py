@@ -16,8 +16,17 @@ def check_password():
     
     def password_entered():
         """Valida las credenciales ingresadas."""
-        if (st.session_state["username"] == "liderlogo" and 
-            st.session_state["password"] == "liderlogo20205"):
+        # Usar credenciales desde secrets si están disponibles
+        if "credentials" in st.secrets:
+            valid_user = st.secrets.credentials.username
+            valid_pass = st.secrets.credentials.password
+        else:
+            # Fallback para desarrollo local
+            valid_user = "liderlogo"
+            valid_pass = "liderlogo20205"
+        
+        if (st.session_state["username"] == valid_user and 
+            st.session_state["password"] == valid_pass):
             st.session_state["password_correct"] = True
             del st.session_state["password"]
             del st.session_state["username"]
@@ -44,7 +53,20 @@ def check_password():
 @st.cache_data
 def load_data():
     """Carga y procesa el archivo CSV."""
-    df = pd.read_csv("LIDERLOGO _ Justificaciones Kit Digital - nico.csv")
+    import io
+    
+    # Intentar cargar desde Streamlit Secrets primero
+    if "csv_data" in st.secrets:
+        csv_string = st.secrets["csv_data"]
+        df = pd.read_csv(io.StringIO(csv_string))
+    else:
+        # Fallback: cargar desde archivo local (para desarrollo)
+        try:
+            df = pd.read_csv("LIDERLOGO _ Justificaciones Kit Digital - nico.csv")
+        except FileNotFoundError:
+            st.error("No se encontró el archivo CSV. Por favor configura los secrets en Streamlit Cloud.")
+            return pd.DataFrame()
+    
     df = df[df['cuenta'].notna()]
     df = df.fillna("")
     return df
