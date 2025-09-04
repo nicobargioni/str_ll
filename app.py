@@ -3,6 +3,18 @@ import pandas as pd
 import plotly.express as px
 import random
 from datetime import datetime
+import io
+
+# Imports condicionales para Google Sheets y encriptación
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    import json
+    import base64
+    from cryptography.fernet import Fernet
+    GOOGLE_SHEETS_AVAILABLE = True
+except ImportError:
+    GOOGLE_SHEETS_AVAILABLE = False
 
 st.set_page_config(
     page_title="Liderlogo - Kit Digital",
@@ -50,11 +62,78 @@ def check_password():
     else:
         return True
 
-@st.cache_data
-def load_data():
-    """Carga y procesa el archivo CSV."""
-    import io
+def decrypt_credentials(encrypted_credentials, key):
+    """Desencriptar las credenciales de Google Sheets"""
+    if not GOOGLE_SHEETS_AVAILABLE:
+        return None
+        
+    f = Fernet(key.encode() if isinstance(key, str) else key)
     
+    # Decodificar desde base64
+    encrypted_data = base64.b64decode(encrypted_credentials.encode())
+    
+    # Desencriptar
+    decrypted_data = f.decrypt(encrypted_data)
+    
+    # Convertir de JSON string a dict
+    return json.loads(decrypted_data.decode())
+
+@st.cache_data
+def load_data_from_sheets():
+    """Carga datos desde Google Sheets"""
+    if not GOOGLE_SHEETS_AVAILABLE:
+        return load_data_csv()
+        
+    try:
+        # Obtener credenciales encriptadas desde secrets
+        if "encrypted_google_credentials" in st.secrets and "encryption_key" in st.secrets:
+            # Desencriptar credenciales
+            credentials_dict = decrypt_credentials(
+                st.secrets["encrypted_google_credentials"],
+                st.secrets["encryption_key"]
+            )
+            
+            if credentials_dict is None:
+                return load_data_csv()
+            
+            # Crear credenciales de Google
+            credentials = Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=[
+                    'https://www.googleapis.com/auth/spreadsheets.readonly',
+                    'https://www.googleapis.com/auth/drive.readonly'
+                ]
+            )
+            
+            # Conectar a Google Sheets
+            gc = gspread.authorize(credentials)
+            
+            # Abrir el spreadsheet
+            sheet_id = "1fltL0oBzJi7KjnzrgI6hObo_4WnyylUgwmgFpdEGk9k"
+            spreadsheet = gc.open_by_key(sheet_id)
+            worksheet = spreadsheet.worksheet("nico")  # Hoja específica "nico"
+            
+            # Obtener todos los datos
+            data = worksheet.get_all_records()
+            df = pd.DataFrame(data)
+            
+        else:
+            # Fallback: usar CSV local o desde secrets
+            return load_data_csv()
+            
+    except Exception as e:
+        st.error(f"Error conectando con Google Sheets: {str(e)}")
+        # Fallback: usar CSV
+        return load_data_csv()
+    
+    # Procesar datos
+    df = df[df['cuenta'].notna()] if 'cuenta' in df.columns else df
+    df = df.fillna("")
+    return df
+
+@st.cache_data
+def load_data_csv():
+    """Carga datos desde CSV (fallback)"""
     # Intentar cargar desde Streamlit Secrets primero
     if "csv_data" in st.secrets:
         csv_string = st.secrets["csv_data"]
@@ -70,6 +149,10 @@ def load_data():
     df = df[df['cuenta'].notna()]
     df = df.fillna("")
     return df
+
+def load_data():
+    """Función principal para cargar datos"""
+    return load_data_from_sheets()
 
 def format_date(date_str):
     """Formatea las fechas del CSV."""
